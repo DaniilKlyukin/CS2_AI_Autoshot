@@ -24,11 +24,11 @@ counter_terrorists_sound = pg.mixer.Sound(os.path.join("sounds", "counter_terror
 class Autoshot:
     def __init__(self):
         self.key_press_delay = 0.7
-        self.predict_delay = 0.1
+        self.predict_delay = 0.0
 
         self.croper = Croper()
         self.croper.crop_size = 512  # self.get_best_crop_size(2560 * 1440)
-        self.croper.crop_resize = 512
+        self.croper.set_crop_bounding_box()
 
         self.recognizer = Recognizer()
         self.recognizer.load_model("save50.keras")
@@ -38,9 +38,12 @@ class Autoshot:
         # 0 - None, 1 - CT, 2 - T
         self.enemy_class = 1
 
-    async def is_need_shoot(self):
-        croped = self.croper.crop_screen()
-        pred = await self.recognizer.predict_with_timeout_async(croped, 1)
+    def is_need_shoot(self):
+
+        croped = self.croper.crop_screen_array_mss()
+
+        pred = self.recognizer.predict(croped)
+
         center = crop_with_size_array(pred, 10)
         obj_class = np.median(center)
         proba = np.count_nonzero(center == obj_class) / center.size
@@ -53,7 +56,7 @@ class Autoshot:
 
         return False
 
-    async def loop(self):
+    def loop(self):
         print("Loop started!")
         program_start_sound.play()
 
@@ -97,9 +100,8 @@ class Autoshot:
                     self.enemy_class = 1
                     counter_terrorists_sound.play()
             if can_predict and (self.auto_check or keyboard.is_pressed('F4')):
+                is_need_shoot = self.is_need_shoot()
                 predict_time_last = predict_time_now
-                is_need_shoot = await self.is_need_shoot()
-
                 if is_need_shoot:
                     mouse.click("left")
             if keyboard.is_pressed('F5') and can_press_key:
@@ -116,4 +118,4 @@ class Autoshot:
 
 autoshot = Autoshot()
 
-asyncio.run(autoshot.loop())
+autoshot.loop()

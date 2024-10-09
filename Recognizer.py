@@ -6,7 +6,39 @@ from PIL import Image
 import tensorflow as tf
 from Augmentator import Augmentator
 from tensorflow_examples.models.pix2pix import pix2pix
-import keras
+
+from keras import layers
+
+
+def double_conv_block(x, n_filters):
+
+   # Conv2D then ReLU activation
+   x = layers.Conv2D(n_filters, 3, padding = "same", activation = "relu", kernel_initializer = "he_normal")(x)
+   # Conv2D then ReLU activation
+   x = layers.Conv2D(n_filters, 3, padding = "same", activation = "relu", kernel_initializer = "he_normal")(x)
+
+   return x
+
+
+def downsample_block(x, n_filters):
+   f = double_conv_block(x, n_filters)
+   p = layers.MaxPool2D(2)(f)
+   p = layers.Dropout(0.3)(p)
+
+   return f, p
+
+
+def upsample_block(x, conv_features, n_filters):
+   # upsample
+   x = layers.Conv2DTranspose(n_filters, 3, 2, padding="same")(x)
+   # concatenate
+   x = layers.concatenate([x, conv_features])
+   # dropout
+   x = layers.Dropout(0.3)(x)
+   # Conv2D twice with ReLU activation
+   x = double_conv_block(x, n_filters)
+
+   return x
 
 
 def load_images_folder(folder):
@@ -119,6 +151,43 @@ class Recognizer:
     def images_to_4d_array(self, images, channels):
         return np.array(images).reshape((len(images), self.img_size, self.img_size, channels))
 
+    def init2(self):
+        inputs = layers.Input(shape=(512, 512, 3))
+        # encoder: contracting path - downsample
+        # 1 - downsample
+        f1, p1 = downsample_block(inputs, 64)
+        # 2 - downsample
+        f2, p2 = downsample_block(p1, 128)
+        # 3 - downsample
+        f3, p3 = downsample_block(p2, 256)
+        # 4 - downsample
+        f4, p4 = downsample_block(p3, 512)
+        # 5 - bottleneck
+        bottleneck = double_conv_block(p4, 1024)
+        # decoder: expanding path - upsample
+        # 6 - upsample
+        u6 = upsample_block(bottleneck, f4, 512)
+        # 7 - upsample
+        u7 = upsample_block(u6, f3, 256)
+        # 8 - upsample
+        u8 = upsample_block(u7, f2, 128)
+        # 9 - upsample
+        u9 = upsample_block(u8, f1, 64)
+        # outputs
+        outputs = layers.Conv2D(3, 1, padding="same", activation="softmax")(u9)
+        # unet model with Keras Functional API
+        unet_model = tf.keras.Model(inputs, outputs, name="U-Net")
+
+        unet_model.compile(optimizer=tf.keras.optimizers.Adam(),
+                           loss="sparse_categorical_crossentropy",
+                           metrics=["accuracy"])
+
+        tf.keras.utils.plot_model(unet_model, show_shapes=True, to_file='model.png')
+
+        self.model = unet_model
+
+        return unet_model
+
     def init_model(self):
 
         base_model = tf.keras.applications.MobileNetV2(input_shape=[self.img_size, self.img_size, 3], include_top=False)
@@ -193,11 +262,9 @@ class Recognizer:
         BATCH_SIZE = 1
         SHUFFLE_BUFFER_SIZE = 4 * images_matrix.shape[0]
 
-        print(images_matrix.shape[0])
-
         dataset = dataset.shuffle(SHUFFLE_BUFFER_SIZE, reshuffle_each_iteration=True).batch(BATCH_SIZE)
 
-        self.init_model()
+        self.init2()
 
         model_history = self.model.fit(dataset, epochs=epochs)
 
@@ -210,9 +277,9 @@ class Recognizer:
 
         return model_history
 
-    def predict(self, image):
-        norm = self.normalize_image(image)
-        matrix = self.images_to_4d_array([norm], 3)
+    def predict(self, image_arr):
+        norm = image_arr / 255
+        matrix = norm.reshape((1, self.img_size, self.img_size, 3))
 
         try:
             pred_mask = self.model.predict(matrix, verbose=0)[0]
@@ -237,28 +304,31 @@ class Recognizer:
                 return res
         except:
             print("Prediction async error!")
-            return np.zeros((self.img_size, self.img_size))
+            return np.zeros((1, 1))
 
     def load_model(self, file_name):
-        self.model = keras.models.load_model(os.path.join(self.save_dir_path, file_name))
+       self.model = tf.keras.models.load_model(os.path.join(self.save_dir_path, file_name))
 
 
 # asyncio entry point
 # for fitting
-async def main():
+def main():
     rec = Recognizer()
 
-    # rec.fit_model(50)
+    #rec.init2()
 
-    rec.load_model("save50.keras")
+    rec.fit_model(50)
+    #rec.load_model("save2.keras")
+
     images, masks = rec.load_images_with_masks()
 
     for im, mask in zip(images, masks):
-        pred = await rec.predict_with_timeout_async(im, 1)
+        pred = rec.predict(np.array(im))
 
         pred_image = rec.mask_array_to_image_with_background(pred, im)
         show_images_row([im, mask, pred_image])
 
 
 # start the event loop
-#asyncio.run(main())
+main()
+

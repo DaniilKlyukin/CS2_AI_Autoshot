@@ -1,9 +1,16 @@
 import os
 
 import numpy as np
-from PIL import ImageGrab
 import datetime
 import keyboard
+
+from mss import mss
+
+sct = mss()
+
+import dxcam
+
+camera = dxcam.create()
 
 
 def crop_with_size(img, size):
@@ -35,16 +42,40 @@ def get_best_crop_size(screen_size, screen_crop_factor=25, is_round_pow2=False):
 
 class Croper:
     def __init__(self):
+
+        screen = camera.grab()
+
+        self.screen_width = screen.shape[1]
+        self.screen_height = screen.shape[0]
+
         self.images_folder = "images"
         self.crop_size = 512
-        self.crop_resize = 512
+
+        x0 = (self.screen_width - self.crop_size) // 2
+        y0 = (self.screen_height - self.crop_size) // 2
+        x1 = (self.screen_width + self.crop_size) // 2
+        y1 = (self.screen_height + self.crop_size) // 2
+
+        self.bounding_box = {'top': y0, 'left': x0, 'width': self.crop_size, 'height': self.crop_size}
+
+        self.region = (x0, y0, x1, y1)
+
+    def set_crop_bounding_box(self):
+        x0 = (self.screen_width - self.crop_size) // 2
+        y0 = (self.screen_height - self.crop_size) // 2
+        x1 = (self.screen_width + self.crop_size) // 2
+        y1 = (self.screen_height + self.crop_size) // 2
+
+        self.region = (x0, y0, x1, y1)
 
     def crop(self, img):
-        return crop_with_size(img, self.crop_size).resize((self.crop_resize, self.crop_resize))
+        return crop_with_size(img, self.crop_size)
 
-    def crop_screen(self):
-        img = ImageGrab.grab()
-        return self.crop(img)
+    def crop_screen_array(self):
+        return camera.grab(region=self.region)
+
+    def crop_screen_array_mss(self):
+        return np.array(sct.grab(self.bounding_box))[..., [2, 1, 0]]
 
     def crop_loop_screen(self):
         while True:
